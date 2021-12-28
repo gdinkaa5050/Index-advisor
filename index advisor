@@ -33,6 +33,22 @@ order by index_leaf_estimate_if_rebuilt/current_leaf_blocks
 show parameter java_jit_enabled
 select * from v$parameter where name='JOB_QUEUE_PROCESSES';
 
+SQL> execute sys.dbms_registry.loaded('JAVAVM');
+
+PL/SQL procedure successfully completed.
+ 
+SQL> execute sys.dbms_registry.loaded('CATJAVA');
+
+PL/SQL procedure successfully completed.
+ 
+SQL> execute sys.dbms_registry.valid('JAVAVM');
+
+PL/SQL procedure successfully completed.
+ 
+SQL> execute sys.dbms_registry.valid('CATJAVA');
+
+PL/SQL procedure successfully completed.
+
 -- And
 Show parameter job_queue_processes
 
