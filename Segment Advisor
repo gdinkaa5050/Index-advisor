@@ -1,0 +1,231 @@
+Reclaim Space from Table Segment
+Run below query to find top 10 largest segments inside a database
+
+COLUMN owner FORMAT A30
+COLUMN segment_name FORMAT A30
+COLUMN tablespace_name FORMAT A30
+SELECT * FROM (SELECT segment_type, segment_name, owner, tablespace_name, bytes/1024/1024 size_mb 
+FROM dba_segments ORDER BY 5 DESC)
+WHERE  ROWNUM <= 10;
+
+***************************************************************************************************
+
+CREATE TABLESPACE rice DATAFILE '/u01/app/oracle/oradata/rice001.dbf' SIZE 2G;
+
+
+CREATE TABLE rice_table(id NUMBER, text VARCHAR2(4000)) tablespace rice;
+
+
+**Insert some dummy 100K records inside the table
+
+SET TIMING ON
+BEGIN
+FOR I IN 1..100000
+LOOP
+   INSERT INTO rice_table VALUES (I, DBMS_RANDOM.STRING('P','4000'));
+   COMMIT;
+END LOOP;
+END;
+/
+
+CREATE INDEX rice_index ON rice_table(TEXT) tablespace rice;
+
+
+**Analyze table & index
+
+Gather table and index stats
+
+ANALYZE TABLE rice_table COMPUTE STATISTICS;
+ANALYZE INDEX rice_index COMPUTE STATISTICS;
+
+
+**Let us check the size of each segment (table and index)
+
+set lines 999;
+col segment_name for a20;
+
+SELECT SEGMENT_TYPE, SEGMENT_NAME, ROUND(BYTES/1024/1024,1) MB, BLOCKS, 
+EXTENTS FROM   DBA_SEGMENTS 
+WHERE  SEGMENT_NAME IN ('RICE_TABLE','RICE_INDEX');
+
+
+
+**Let us delete half of the rows from the table. Note, the below procedure is deleting alternate rows from the table which will create lot of fragmented space
+
+SELECT COUNT(*) FROM RICE_TABLE;
+
+SET TIMING ON 
+BEGIN
+   FOR I IN (SELECT id FROM rice_table)
+   LOOP
+      IF MOD(I.id,2) != 0 
+      THEN 
+        DELETE rice_table WHERE id=I.id;
+	COMMIT;
+      END IF;
+   END LOOP;
+END;
+/
+
+SELECT COUNT(*) FROM RICE_TABLE;
+
+
+
+**Now that we have delete half of the rows, let us gather stats for table and index again
+
+ANALYZE TABLE rice_table COMPUTE STATISTICS;
+ANALYZE INDEX rice_index COMPUTE STATISTICS;
+
+
+SELECT SEGMENT_TYPE, SEGMENT_NAME, ROUND(BYTES/1024/1024,1) MB, BLOCKS, 
+EXTENTS FROM   DBA_SEGMENTS 
+WHERE  SEGMENT_NAME IN ('RICE_TABLE','RICE_INDEX');
+
+
+*****************************************************************
+**Review segment advisor
+Let us check what Oracle segment advisor has to say
+
+SET SERVEROUTOUT ON
+DECLARE
+   TSK_ID          NUMBER;
+   TSK_NAME        VARCHAR2(100);
+   TSK_DESCRIPTION VARCHAR2(500);
+   OBJ_ID          NUMBER;
+BEGIN
+   TSK_NAME        := 'ANALYZE_TABLE_RICE';--variable
+   TSK_DESCRIPTION := 'Segment advice for RICE_TABLE';--variable
+   
+   -- 1. Create a Task
+   DBMS_ADVISOR.CREATE_TASK(
+      ADVISOR_NAME => 'Segment Advisor',
+      TASK_ID      => TSK_ID,
+      TASK_NAME    => TSK_NAME,
+      TASK_DESC    => TSK_DESCRIPTION);
+      
+   -- 2. Assign the object to the task 
+   DBMS_ADVISOR.CREATE_OBJECT(
+      TASK_NAME    => TSK_NAME,
+      OBJECT_TYPE  => 'TABLE',
+      ATTR1        => 'HR',--owner
+      ATTR2        => 'RICE_TABLE',--table name
+      ATTR3        => NULL,
+      ATTR4        => NULL,
+      ATTR5        => NULL,
+      OBJECT_ID    => OBJ_ID);
+
+   -- 3. Set the task parameters
+   DBMS_ADVISOR.SET_TASK_PARAMETER(
+      TASK_NAME    => TSK_NAME,
+      PARAMETER    => 'recommend_all',
+      VALUE        => 'TRUE');
+
+   -- 4. Execute the task 
+   DBMS_ADVISOR.EXECUTE_TASK(TSK_NAME);
+   
+END;
+/
+
+**Create advisor task for index
+
+SET SERVEROUTOUT ON
+DECLARE
+   TSK_ID          NUMBER;
+   TSK_NAME        VARCHAR2(100);
+   TSK_DESCRIPTION VARCHAR2(500);
+   OBJ_ID          NUMBER;
+BEGIN
+   TSK_NAME        := 'ANALYZE_INDEX_RICE';
+   TSK_DESCRIPTION := 'Segment advice for RICE_INDEX';
+   
+   -- 1. Create a Task
+   DBMS_ADVISOR.CREATE_TASK(
+      ADVISOR_NAME => 'Segment Advisor',
+      TASK_ID      => TSK_ID,
+      TASK_NAME    => TSK_NAME,
+      TASK_DESC    => TSK_DESCRIPTION);
+      
+   -- 2. Assign the object to the task 
+   DBMS_ADVISOR.CREATE_OBJECT(
+      TASK_NAME    => TSK_NAME,
+      OBJECT_TYPE  => 'INDEX',
+      ATTR1        => 'HR',--Owner
+      ATTR2        => 'RICE_INDEX',--index name
+      ATTR3        => NULL,
+      ATTR4        => NULL,
+      ATTR5        => NULL,
+      OBJECT_ID    => OBJ_ID);
+
+   -- 3. Set the task parameters
+   DBMS_ADVISOR.SET_TASK_PARAMETER(
+      TASK_NAME    => TSK_NAME,
+      PARAMETER    => 'recommend_all',
+      VALUE        => 'TRUE');
+
+   -- 4. Execute the task 
+   DBMS_ADVISOR.EXECUTE_TASK(TSK_NAME);
+   
+END;
+/
+Verify tasks are completed
+
+SELECT TASK_NAME, 
+       STATUS 
+FROM   DBA_ADVISOR_TASKS 
+WHERE  ADVISOR_NAME='Segment Advisor' AND 
+       TASK_NAME IN ('ANALYZE_TABLE_RICE','ANALYZE_INDEX_RICE');
+
+
+Review segment advisor
+
+Let us check what Oracle segment advisor has to say
+
+SET LINES 300
+SET PAGES 999
+COL SEGNAME FOR A15
+COL PARTITION FOR A10
+COL TYPE FOR A10
+COL MESSAGE FOR A60
+SELECT DAO.ATTR2 SEGNAME, 
+       DAO.ATTR3 PARTITION, 
+       DAO.TYPE, 
+       DAF.MESSAGE 
+FROM   DBA_ADVISOR_FINDINGS DAF, 
+       DBA_ADVISOR_OBJECTS DAO 
+WHERE  DAO.TASK_ID = DAF.TASK_ID AND 
+       DAO.OBJECT_ID = DAF.OBJECT_ID AND 
+       DAF.TASK_NAME IN ('ANALYZE_TABLE_TASK','ANALYZE_INDEX_TASK');
+
+
+
+
+**Shrink table cascade
+Use below command to shrink table but before that you must enable row movement
+
+ALTER TABLE RICE_TABLE ENABLE ROW MOVEMENT;
+ALTER TABLE RICE_TABLE SHRINK SPACE CASCADE;
+ALTER TABLE RICE_TABLE DISABLE ROW MOVEMENT;
+
+
+**Post shrinking table and index, let us gather stats and check segment space savings
+
+ANALYZE TABLE rice_table COMPUTE STATISTICS;
+ANALYZE INDEX rice_index COMPUTE STATISTICS;
+
+
+SELECT SEGMENT_TYPE, SEGMENT_NAME, ROUND(BYTES/1024/1024,1) MB, BLOCKS, 
+EXTENTS FROM   DBA_SEGMENTS 
+WHERE  SEGMENT_NAME IN ('RICE_TABLE','RICE_INDEX');
+
+
+**Deallocate space
+Now that we have shrink table and index, we can release the deallocated space to the tablespace so that new data can be inserted
+
+ALTER TABLE rice_table DEALLOCATE UNUSED;
+ALTER INDEX rice_index DEALLOCATE UNUSED;
+
+
+**At this stage, you can delete the advisor tasks that you created earlier
+
+EXEC DBMS_ADVISOR.DELETE_TASK(TASK_NAME => 'ANALYZE_TABLE_RICE');
+EXEC DBMS_ADVISOR.DELETE_TASK(TASK_NAME => 'ANALYZE_INDEX_RICE');
