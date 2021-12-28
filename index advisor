@@ -50,4 +50,4 @@ create or replace java system
 --Revert the value of _system_trig_enabled, JOB_QUEUE_PROCESSES and java_jit_enabled.
 alter system set "_system_trig_enabled" = TRUE scope=memory;
 alter system set java_jit_enabled=TRUE;
-alter system set JOB_QUEUE_PROCESSES=4000;
+alter system set JOB_QUEUE_PROCESSES=10;
