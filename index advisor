@@ -28,3 +28,26 @@ where tab.owner='&OWNER' and ind.leaf_blocks is not null and ind.leaf_blocks > 1
 ) group by owner, table_name, index_name, current_leaf_blocks, ind_num_rows, uniq_ind, rowid_length
 ) a where index_leaf_estimate_if_rebuilt/current_leaf_blocks < 0.5
 order by index_leaf_estimate_if_rebuilt/current_leaf_blocks
+***********************************************************************************************
+
+show parameter java_jit_enabled
+select * from v$parameter where name='JOB_QUEUE_PROCESSES';
+
+-- And
+Show parameter job_queue_processes
+
+alter system set "_system_trig_enabled" = false scope=memory;
+alter system set java_jit_enabled=false;
+alter system set JOB_QUEUE_PROCESSES=0;
+
+5. Execute the java system command which compile java components.
+
+create or replace java system
+/
+
+6. Rollback the changed parameter in steps 4 to upper value.
+
+--Revert the value of _system_trig_enabled, JOB_QUEUE_PROCESSES and java_jit_enabled.
+alter system set "_system_trig_enabled" = TRUE scope=memory;
+alter system set java_jit_enabled=TRUE;
+alter system set JOB_QUEUE_PROCESSES=4000;
