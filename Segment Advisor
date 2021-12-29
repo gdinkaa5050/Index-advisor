@@ -29,7 +29,7 @@ END;
 /
 
 CREATE INDEX rice_index ON rice_table(TEXT) tablespace rice;
-
+*************************************************************************************
 
 **Analyze table & index
 
